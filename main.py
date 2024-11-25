@@ -20,7 +20,21 @@ def general_routing(input: str):
 @tool
 def browser_search(input: str):
     """Use Tavily to search the browser for real-time web results"""
+    print("used function broswer")
     return TavilySearchResults(max_results=2).invoke(input)
+
+@tool
+def code_work(input: str):
+    """Use claude to write code from any related code context"""
+    print("used function code work")
+    return "code work tool"
+
+@tool
+def image_generation(input: str):
+    """Use flux to generate images from any related image text generation context"""
+    print("used flux image generation")
+    return "flux image generation tool"
+
 
 message_with_multiple_tool_calls = AIMessage(
     content="",
@@ -40,11 +54,14 @@ message_with_multiple_tool_calls = AIMessage(
     ],
 )
 
-tools = [browser_search, general_routing]
+tools = [browser_search, general_routing, code_work, image_generation]
 tool_node = ToolNode(tools)
-result = tool_node.invoke({"messages": [message_with_multiple_tool_calls]})
+# result = tool_node.invoke({"messages": [message_with_multiple_tool_calls]})
+model_with_tools = ChatAnthropic(model="claude-3-haiku-20240307", temperature=0).bind_tools(tools)
 
+# result = model_with_tools.invoke("what's the weather in sf?")
 
+result = tool_node.invoke({"messages": [model_with_tools.invoke("Create an image of a cat.")]})
 print(".")
 print(".")
 print(".")
