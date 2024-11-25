@@ -8,7 +8,9 @@ from langgraph.graph import StateGraph, MessagesState
 from IPython.display import Image, display
 from langchain_community.tools.tavily_search import TavilySearchResults
 import json
-
+import requests
+import os
+import time
 load_dotenv()
 
 # DEFINE TOOLS
@@ -29,11 +31,57 @@ def code_work(input: str):
     print("used function code work")
     return "code work tool"
 
+
+def get_image_result(image_id, api_key):
+    headers = {
+        'X-Key': api_key
+    }
+    
+    url = f"https://api.bfl.ml/v1/get_result?id={image_id}"
+    
+    # The image might take some time to generate, so we need to poll until it's ready
+    while True:
+        response = requests.get(url, headers=headers)
+        result = response.json()
+        
+        if result['status'] != "Task not found":
+            return result
+            
+        time.sleep(1)  # Wait a second before checking again
+
+# Example usage:
+# First get the image ID from your generation request
+# Then:
+
+
 @tool
 def image_generation(input: str):
     """Use flux to generate images from any related image text generation context"""
-    print("used flux image generation")
-    return "flux image generation tool"
+    print("used FLUX image generation")
+    url = "https://api.bfl.ml/v1/flux-pro-1.1"
+    image_url = "https://api.bfl.ml/v1/get_result?id="
+    payload = {
+        "prompt": f"{input}",
+        "width": 1024,
+        "height": 768,
+        "prompt_upsampling": True,
+        "seed": 42,
+        "safety_tolerance": 2,
+        "output_format": "jpeg"
+    }
+
+    BFL_API_KEY = os.getenv('BFL_API_KEY')
+    headers = {
+        "Content-Type": "application/json",
+        "X-Key": f"{BFL_API_KEY}"
+    }
+
+    response = requests.post(url, json=payload, headers=headers)
+    image_id = response.json()["id"]
+    image_url = image_url + image_id
+    print("IMAGE URL:", image_url)
+
+    return image_url
 
 
 message_with_multiple_tool_calls = AIMessage(
@@ -68,6 +116,3 @@ print(".")
 print("--------------------------------")
 print(result)
 print("--------------------------------")
-
-
-# EXECUTE BOTH OF THE TOOLS THAT WE HAVE DEFINED. IT EXECUTES IN ORDER.
