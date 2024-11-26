@@ -33,6 +33,7 @@ build/
 logs/
 *.db
 *.sqlite3
+*.langgraph.json
 
 # Testing
 .coverage
