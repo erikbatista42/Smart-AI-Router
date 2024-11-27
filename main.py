@@ -1,10 +1,12 @@
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, AIMessage, ToolMessage, FunctionMessage
 from langchain_core.tools import tool
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.prebuilt import ToolNode
-from typing import Literal
+from typing import Literal, Optional, Annotated, Sequence
 from langchain_anthropic import ChatAnthropic
-from langgraph.graph import StateGraph, MessagesState
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, MessagesState, END, StateGraph, START
 from IPython.display import Image, display
 from langchain_community.tools.tavily_search import TavilySearchResults
 import json
@@ -12,11 +14,20 @@ import requests
 import os
 import time
 from openai import OpenAI
+import operator
+from typing_extensions import TypedDict
 
+
+
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import BaseMessage, HumanMessage
 
 load_dotenv()
 
 # DEFINE TOOLS
+
+
 @tool
 def general_routing(input: str):
     """Use this tool for:
@@ -116,68 +127,95 @@ tool_node = ToolNode(tools)
 model_with_tools = ChatAnthropic(model="claude-3-haiku-20240307", temperature=1, api_key=os.getenv("ANTHROPIC_API_KEY")).bind_tools(tools)
 
 
-result = tool_node.invoke({"messages": [model_with_tools.invoke("Make an image of a high dosage looking pre-workout pill with a red and black label that says 'X-AI' on it")]})
+# result = tool_node.invoke({"messages": [model_with_tools.invoke("Make an image of a high dosage looking pre-workout pill with a red and black label that says 'X-AI' on it")]})
 print(".")
 print(".")
 print(".")
 print("--------------------------------")
-print(result)
+# print(result)
 print("--------------------------------")
 
 
+# Creating ReAct agent - takes a query as an input, then repeadtely calls tools until it has enough information to answer the query.
 
-from langchain_openai import ChatOpenAI
-from typing import Optional
-from langchain_core.runnables.config import RunnableConfig
-import operator
-from typing import Annotated, Sequence
-from typing_extensions import TypedDict
+def should_continue(state: MessagesState):
+    messages = state["messages"]
+    last_message = messages[-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
 
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import BaseMessage, HumanMessage
+def call_model(state: MessagesState):
+    messages = state["messages"]
+    # The system message should be the first message in the list
+    if not any(isinstance(msg, SystemMessage) for msg in messages):
+        messages = [
+            SystemMessage(content="""You are a helpful AI assistant with access to various tools:
+    - Use general_routing for basic knowledge and explanations
+    - Use browser_search for current events and real-time info
+    - Use code_work for programming tasks
+    - Use image_generation for creating new images
+    
+    Choose tools carefully based on the user's needs.""")
+        ] + messages
+    
+    response = model_with_tools.invoke(messages)
+    return {"messages": messages + [response]}
 
-from langgraph.graph import END, StateGraph, START
+@tool
+def router_tool(input: str):
+    """Route the input to the appropriate tool based on the query type.
+    ALWAYS use this tool first to determine which specialized tool to use next.
+    Returns one of: 'general_routing', 'browser_search', 'code_work', 'image_generation' and NOTHING ELSE. ONLY RETURN THE NAME OF THE TOOLS.
+    """
+    print("Using router tool to determine next action")
+    
+    # Use Claude to determine the best tool
+    router_model = ChatAnthropic(
+        model="claude-3-haiku-20240307",
+        temperature=0,
+        api_key=os.getenv("ANTHROPIC_API_KEY")
+    )
+    
+    prompt = f"""Analyze this query and return ONLY the name of the most appropriate tool to use next.
+    Query: {input}
+    
+    Available tools:
+    - general_routing: For general knowledge, simple explanations, basic facts
+    - browser_search: For current events, real-time info, web searches
+    - code_work: For programming, coding, technical questions
+    - image_generation: For creating/generating images
+    
+    Return ONLY ONE of these exact tool names and NOTHING ELSE: general_routing, browser_search, code_work, image_generation
+    
+    For example:
+    input: What are some of the latest updates of Conor McGregor?
+    output: browser_search
+    
+    Another example:
+    input: Generate an image of a cat
+    output: image_generation"""
+    
+    response = router_model.invoke(prompt)
+    tool_name = response.content.strip().lower()
+    print(f"Router selected: {tool_name}")
+    return {"messages": [AIMessage(content=tool_name)]}
 
-model = ChatAnthropic(model_name="claude-2.1")
-class AgentState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], operator.add]
 
+workflow = StateGraph(MessagesState)
 
-def _call_model(state):
-    state["messages"]
-    response = model.invoke(state["messages"])
-    return {"messages": [response]}
+# NODES
+workflow.add_node("router", router_tool)
 
+# EDGES
+workflow.add_edge(START, "router")
+workflow.add_edge("router", END)
 
-# Define a new graph
-builder = StateGraph(AgentState)
-builder.add_node("model", _call_model)
-builder.add_edge(START, "model")
-builder.add_edge("model", END)
+app = workflow.compile()
 
-graph = builder.compile()
-
-
-openai_model = ChatOpenAI()
-
-models = {
-    "anthropic": "claude-3-haiku-20240307",
-    "openai": openai_model,
-}
-
-
-def _call_model(state: AgentState, config: RunnableConfig):
-    # Access the config through the configurable key
-    model_name = config["configurable"].get("model", "anthropic")
-    model = models[model_name]
-    response = model.invoke(state["messages"])
-    return {"messages": [response]}
-
-
-# Define a new graph
-builder = StateGraph(AgentState)
-builder.add_node("model", _call_model)
-builder.add_edge(START, "model")
-builder.add_edge("model", END)
-
-graph = builder.compile()
+# For testing locally (won't affect LangStudio)
+if __name__ == "__main__":
+    result = app.invoke({
+        "messages": [HumanMessage(content="tell me the latest updates of conor mcgregor")]
+    })
+    print(result)
