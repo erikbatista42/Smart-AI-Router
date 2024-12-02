@@ -25,8 +25,10 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 load_dotenv()
 
-# DEFINE TOOLS
+# Initiate messages state/list
+state = MessagesState()
 
+# DEFINE TOOLS
 
 @tool
 def general_routing(input: str):
@@ -85,6 +87,7 @@ def code_work(input: str):
     print("USED FUNCTION: CODE WORK -- ChatGPT-omini")
     return "code work tool"
 
+
 @tool
 def image_generation(input: str):
     """Use this tool when:
@@ -97,6 +100,8 @@ def image_generation(input: str):
     print("used FLUX image generation")
     url = "https://api.bfl.ml/v1/flux-pro-1.1"
     image_url = "https://api.bfl.ml/v1/get_result?id="
+    # prompt_given = MessagesState["messages"][-2].content
+    # print("PROMPT GIVEN----------:", prompt_given)
     payload = {
         "prompt": f"{input}",
         "width": 1024,
@@ -119,7 +124,6 @@ def image_generation(input: str):
     print("IMAGE URL:", image_url)
 
     return image_url
-
 
 tools = [general_routing, browser_search, code_work, image_generation]
 tool_node = ToolNode(tools)
@@ -162,11 +166,11 @@ def call_model(state: MessagesState):
     response = model_with_tools.invoke(messages)
     return {"messages": messages + [response]}
 
+# ------------------------------
 @tool
-def router_tool(input: str):
-    """Route the input to the appropriate tool based on the query type.
+def router_tool():
+    """Route to the appropriate tool based on the query type.
     ALWAYS use this tool first to determine which specialized tool to use next.
-    Returns one of: 'general_routing', 'browser_search', 'code_work', 'image_generation' and NOTHING ELSE. ONLY RETURN THE NAME OF THE TOOLS.
     """
     print("Using router tool to determine next action")
     
@@ -177,24 +181,26 @@ def router_tool(input: str):
         api_key=os.getenv("ANTHROPIC_API_KEY")
     )
     
-    prompt = f"""Analyze this query and return ONLY the name of the most appropriate tool to use next.
-    Query: {input}
+    last_message = state["messages"][-1].content
+    # # messages = state["messages"]
+    # last_message = messages[-1]
+    # print("LAST MESSAGE: ", last_message)
+    prompt = f"""
+    Your job is to analyze this query and tell me which tool you think is most appropriate to use next based on the following query: {last_message}.
+
+    Tool names:
+    "general_routing" - Used for general knowledge, simple explanations, basic facts
+    "browser_search" - Used for current events, real-time info, web searches
+    "image_generation" - Used for creating/generating images
+    "code_work" - For anything related to writing code, debugging code, etc.
+
+    Only return the name of the tool and NOTHING ELSE.
+
+    FOR EXAMPLE, if the query is about the latest updates of Conor McGregor, you should return "browser_search".
+
+    As another example, if the query is about generating any kind of images, you should return "image_generation".
     
-    Available tools:
-    - general_routing: For general knowledge, simple explanations, basic facts
-    - browser_search: For current events, real-time info, web searches
-    - code_work: For programming, coding, technical questions
-    - image_generation: For creating/generating images
-    
-    Return ONLY ONE of these exact tool names and NOTHING ELSE: general_routing, browser_search, code_work, image_generation
-    
-    For example:
-    input: What are some of the latest updates of Conor McGregor?
-    output: browser_search
-    
-    Another example:
-    input: Generate an image of a cat
-    output: image_generation"""
+    """
     
     response = router_model.invoke(prompt)
     tool_name = response.content.strip().lower()
@@ -202,6 +208,8 @@ def router_tool(input: str):
     return {"messages": [AIMessage(content=tool_name)]}
 
 
+
+# GRAPH DEFINITION
 workflow = StateGraph(MessagesState)
 
 # NODES
@@ -215,7 +223,9 @@ app = workflow.compile()
 
 # For testing locally (won't affect LangStudio)
 if __name__ == "__main__":
-    result = app.invoke({
-        "messages": [HumanMessage(content="tell me the latest updates of conor mcgregor")]
-    })
+    first_message = HumanMessage(content="Generate an image of a mysterious woman with full dark eyes.")
+    state["messages"] = [first_message]
+    result = app.invoke(state)
     print(result)
+    
+# left off at trying to get the image generation tool to work with the state messages.
